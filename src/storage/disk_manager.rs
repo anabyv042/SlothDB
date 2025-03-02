@@ -1,4 +1,4 @@
-use std::fs::{File, OpenOptions};
+use std::fs::{File, Metadata, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
@@ -10,12 +10,12 @@ pub struct DiskManager {
 
 impl DiskManager {
     /// Opens an existing file or creates a new one.
-    pub fn new(filename: &str) -> Self {
+    pub fn new(file_path: &Path) -> Self {
         let file = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
-            .open(Path::new(filename))
+            .open(file_path)
             .expect("Failed to open database file");
 
         Self { file }
@@ -36,5 +36,9 @@ impl DiskManager {
         self.file.write_all(buffer)?;
         self.file.flush()?; // Ensure data is written to disk
         Ok(())
+    }
+
+    pub fn get_page_count(&self) -> usize {
+        Metadata::len(&self.file.metadata().unwrap()) as usize / PAGE_SIZE
     }
 }

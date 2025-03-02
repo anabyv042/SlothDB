@@ -1,53 +1,11 @@
-use super::{
-    tuple::{Tuple, TupleMetadata},
-    PAGE_SIZE,
-};
-use crate::table::Row;
+use super::PAGE_SIZE;
+use crate::row::Row;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct RawPage {
-    id: usize,
-    data: Vec<u8>,
-}
-
-impl RawPage {
-    pub fn new(id: usize) -> Self {
-        Self {
-            id,
-            data: vec![0; PAGE_SIZE],
-        }
-    }
-
-    pub fn from_bytes(id: usize, data: Vec<u8>) -> Self {
-        Self { id, data }
-    }
-
-    pub fn get_id(&self) -> &usize {
-        &self.id
-    }
-
-    pub fn get_data(&self) -> &[u8] {
-        &self.data
-    }
-
-    pub fn read(&self, offset: usize, length: usize) -> Option<&[u8]> {
-        if offset + length <= PAGE_SIZE {
-            Some(&self.data[offset..offset + length])
-        } else {
-            None
-        }
-    }
-
-    pub fn write(&mut self, offset: usize, buf: &[u8]) -> anyhow::Result<()> {
-        let len = buf.len();
-        if offset + len <= PAGE_SIZE {
-            self.data[offset..offset + len].copy_from_slice(buf);
-        } else {
-            anyhow::bail!("Write is out of bounds");
-        }
-        Ok(())
-    }
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("The page is full")]
+    NotEnoughSpace,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
@@ -63,6 +21,9 @@ pub struct RowPage {
     free_space_offset: u16,
     slots: Vec<Slot>,
     data: Vec<u8>,
+    // runtime data - won't be serialized
+    pub is_dirty: bool,
+    pub referenced_recently: bool,
 }
 
 impl RowPage {
@@ -73,16 +34,35 @@ impl RowPage {
             tuple_count: 0,
             slots: Vec::new(),
             data: Vec::new(),
+            is_dirty: false,
+            referenced_recently: false,
         }
     }
 
-    pub fn insert_row(&mut self, tuple: &Row) -> Option<usize> {
+    pub fn get_id(&self) -> u32 {
+        self.page_id
+    }
+
+    pub fn get_row_count(&self) -> usize {
+        self.tuple_count as usize
+    }
+
+    pub fn is_enough_space(&self, tuple: &Row) -> bool {
         let tuple_bytes = bincode::serialize(&tuple).unwrap();
         let tuple_size = tuple_bytes.len();
-        let required_space = tuple_size + 2;
+        let required_space = tuple_size + 4;
 
-        if self.free_space_offset as usize + required_space > PAGE_SIZE {
-            return None; // Not enough space
+        8 + self.tuple_count as usize * 4 + self.data.len() + required_space <= PAGE_SIZE
+    }
+
+    pub fn insert_row(&mut self, tuple: &Row) -> Result<usize, Error> {
+        self.referenced_recently = true;
+        let tuple_bytes = bincode::serialize(&tuple).unwrap();
+        let tuple_size = tuple_bytes.len();
+        let required_space = tuple_size + 4;
+
+        if 8 + self.tuple_count as usize * 4 + self.data.len() + required_space > PAGE_SIZE {
+            return Err(Error::NotEnoughSpace);
         }
 
         let slot_index = self.slots.len();
@@ -95,12 +75,14 @@ impl RowPage {
 
         // Store tuple in free space
         self.data.extend(&tuple_bytes);
+        self.is_dirty = true;
         self.free_space_offset += tuple_size as u16;
-        Some(slot_index)
+        Ok(slot_index)
     }
 
     /// Retrieves a tuple by slot index
-    pub fn get_tuple(&self, slot_index: usize) -> Option<Row> {
+    pub fn get_tuple(&mut self, slot_index: usize) -> Option<Row> {
+        self.referenced_recently = true;
         if let Some(slot) = self.slots.get(slot_index) {
             let offset = slot.offset as usize;
             let size = slot.size as usize;
@@ -123,7 +105,7 @@ impl RowPage {
             offset += 4;
         }
 
-        bytes[offset..offset+self.data.len()].copy_from_slice(&self.data);
+        bytes[offset..offset + self.data.len()].copy_from_slice(&self.data);
 
         bytes
     }
@@ -144,12 +126,14 @@ impl RowPage {
             });
             offset += 4;
         }
-        let data = bytes[offset..offset+free_space_offset as usize].to_vec();
+        let data = bytes[offset..offset + free_space_offset as usize].to_vec();
 
         Self {
             page_id,
             tuple_count,
             free_space_offset,
+            is_dirty: false,
+            referenced_recently: false,
             slots,
             data,
         }

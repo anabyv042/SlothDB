@@ -1,35 +1,34 @@
-use catalog::Catalog;
-use disk_manager::DiskManager;
-use page::RowPage;
-use tuple::{FieldType, FieldValue, Tuple, TupleMetadata};
-
-use crate::table::Row;
-
 mod buffer_pool;
-pub mod catalog;
-pub mod disk_manager;
-pub mod page;
-mod tuple;
+mod disk_manager;
+mod page;
+mod pager;
+pub mod record_manager;
 
 pub const PAGE_SIZE: usize = 4096;
 
-#[test]
-fn test() {
-    let mut disk_manager = DiskManager::new("database.db");
+#[cfg(test)]
+mod tests {
+    use crate::{row::Row, storage::record_manager::RecordManager};
+    use tempfile::tempdir;
 
-    let mut page = RowPage::new(1);
-    let sample_row = Row {name: "name".to_string(), age: 10};
-    let slot = page.insert_row(&sample_row).unwrap();
+    #[test]
+    fn serializes_and_deserializes() {
+        let dir = tempdir().unwrap();
 
-    disk_manager
-        .write_page(1, &page.serialize())
-        .expect("Failed to write page");
+        let mut rm = RecordManager::new(&dir.path().join("database.db"));
 
-    let mut page_data: Vec<u8> = vec![0; PAGE_SIZE];
-    disk_manager.read_page(1, page_data.as_mut_slice()).unwrap();
-    let page = RowPage::deserialize(&page_data);
+        let mut rows = vec![];
+        for i in 0..1000000 {
+            let row = Row {
+                id: i,
+                name: format!("name_{i}"),
+                age: 10,
+            };
+            rm.insert_record(&row);
+            rows.push(row.clone());
+        }
 
-    let actual_tuple = page.get_tuple(slot).unwrap();
-
-    assert_eq!(sample_row, actual_tuple);
+        let scanned_rows = rm.scan_records();
+        assert_eq!(rows, scanned_rows);
+    }
 }
