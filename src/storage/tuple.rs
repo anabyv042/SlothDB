@@ -1,6 +1,6 @@
 use std::{collections::HashMap, mem::size_of};
 
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FieldType {
     Integer,
     Text(usize),
@@ -21,13 +21,17 @@ pub enum FieldValue {
     Text(String),
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TupleMetadata {
     columns: Vec<String>,
     types: Vec<FieldType>,
 }
 
 impl TupleMetadata {
+    pub fn new(columns: Vec<String>, types: Vec<FieldType>) -> Self {
+        Self { columns, types }
+    }
+
     pub fn size(&self) -> usize {
         let mut size = 0;
         for t in &self.types {
@@ -37,12 +41,17 @@ impl TupleMetadata {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct Tuple {
     metadata: TupleMetadata,
     data: Vec<FieldValue>,
 }
 
 impl Tuple {
+    pub fn new(metadata: TupleMetadata, data: Vec<FieldValue>) -> Self {
+        Self { metadata, data }
+    }
+
     pub fn from_bytes(metadata: TupleMetadata, bytes: &[u8]) -> Self {
         if bytes.len() != metadata.size() {
             panic!("Invalid size of bytes");
@@ -111,5 +120,5 @@ fn serializes_and_deserializes() {
     let bytes = tuple.to_bytes();
     let parsed_tuple = Tuple::from_bytes(metadata, &bytes);
 
-    assert_eq!(parsed_tuple.data, tuple.data);
+    assert_eq!(parsed_tuple, tuple);
 }
