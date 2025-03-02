@@ -1,5 +1,5 @@
 use super::PAGE_SIZE;
-use crate::row::Row;
+use crate::record::Record;
 use serde::{Deserialize, Serialize};
 
 #[derive(thiserror::Error, Debug)]
@@ -15,9 +15,9 @@ pub struct Slot {
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
-pub struct RowPage {
+pub struct Page {
     page_id: u32,
-    tuple_count: u16,
+    record_count: u16,
     free_space_offset: u16,
     slots: Vec<Slot>,
     data: Vec<u8>,
@@ -26,12 +26,12 @@ pub struct RowPage {
     pub referenced_recently: bool,
 }
 
-impl RowPage {
+impl Page {
     pub fn new(id: u32) -> Self {
         Self {
             page_id: id,
             free_space_offset: 0,
-            tuple_count: 0,
+            record_count: 0,
             slots: Vec::new(),
             data: Vec::new(),
             is_dirty: false,
@@ -43,45 +43,45 @@ impl RowPage {
         self.page_id
     }
 
-    pub fn get_row_count(&self) -> usize {
-        self.tuple_count as usize
+    pub fn get_record_count(&self) -> usize {
+        self.record_count as usize
     }
 
-    pub fn is_enough_space(&self, tuple: &Row) -> bool {
-        let tuple_bytes = bincode::serialize(&tuple).unwrap();
-        let tuple_size = tuple_bytes.len();
-        let required_space = tuple_size + 4;
+    pub fn is_enough_space(&self, record: &Record) -> bool {
+        let record_bytes = bincode::serialize(&record).unwrap();
+        let record_size = record_bytes.len();
+        let required_space = record_size + 4;
 
-        8 + self.tuple_count as usize * 4 + self.data.len() + required_space <= PAGE_SIZE
+        8 + self.record_count as usize * 4 + self.data.len() + required_space <= PAGE_SIZE
     }
 
-    pub fn insert_row(&mut self, tuple: &Row) -> Result<usize, Error> {
+    pub fn insert_record(&mut self, record: &Record) -> Result<usize, Error> {
         self.referenced_recently = true;
-        let tuple_bytes = bincode::serialize(&tuple).unwrap();
-        let tuple_size = tuple_bytes.len();
-        let required_space = tuple_size + 4;
+        let record_bytes = bincode::serialize(&record).unwrap();
+        let record_size = record_bytes.len();
+        let required_space = record_size + 4;
 
-        if 8 + self.tuple_count as usize * 4 + self.data.len() + required_space > PAGE_SIZE {
+        if 8 + self.record_count as usize * 4 + self.data.len() + required_space > PAGE_SIZE {
             return Err(Error::NotEnoughSpace);
         }
 
         let slot_index = self.slots.len();
         let slot = Slot {
             offset: self.free_space_offset,
-            size: tuple_bytes.len() as u16,
+            size: record_bytes.len() as u16,
         };
         self.slots.push(slot);
-        self.tuple_count += 1;
+        self.record_count += 1;
 
-        // Store tuple in free space
-        self.data.extend(&tuple_bytes);
+        // Store record in free space
+        self.data.extend(&record_bytes);
         self.is_dirty = true;
-        self.free_space_offset += tuple_size as u16;
+        self.free_space_offset += record_size as u16;
         Ok(slot_index)
     }
 
-    /// Retrieves a tuple by slot index
-    pub fn get_tuple(&mut self, slot_index: usize) -> Option<Row> {
+    /// Retrieves a record by slot index
+    pub fn read_record(&mut self, slot_index: usize) -> Option<Record> {
         self.referenced_recently = true;
         if let Some(slot) = self.slots.get(slot_index) {
             let offset = slot.offset as usize;
@@ -95,7 +95,7 @@ impl RowPage {
     pub fn serialize(&self) -> Vec<u8> {
         let mut bytes = vec![0; PAGE_SIZE];
         bytes[0..4].copy_from_slice(&self.page_id.to_le_bytes());
-        bytes[4..6].copy_from_slice(&self.tuple_count.to_le_bytes());
+        bytes[4..6].copy_from_slice(&self.record_count.to_le_bytes());
         bytes[6..8].copy_from_slice(&self.free_space_offset.to_le_bytes());
 
         let mut offset = 8;
@@ -112,17 +112,17 @@ impl RowPage {
 
     pub fn deserialize(bytes: &[u8]) -> Self {
         let page_id = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
-        let tuple_count = u16::from_le_bytes(bytes[4..6].try_into().unwrap());
+        let record_count = u16::from_le_bytes(bytes[4..6].try_into().unwrap());
         let free_space_offset = u16::from_le_bytes(bytes[6..8].try_into().unwrap());
 
         let mut offset = 8;
         let mut slots = vec![];
-        for _ in 0..tuple_count {
-            let tuple_offset = u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap());
-            let tuple_size = u16::from_le_bytes(bytes[offset + 2..offset + 4].try_into().unwrap());
+        for _ in 0..record_count {
+            let record_offset = u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap());
+            let record_size = u16::from_le_bytes(bytes[offset + 2..offset + 4].try_into().unwrap());
             slots.push(Slot {
-                offset: tuple_offset,
-                size: tuple_size,
+                offset: record_offset,
+                size: record_size,
             });
             offset += 4;
         }
@@ -130,7 +130,7 @@ impl RowPage {
 
         Self {
             page_id,
-            tuple_count,
+            record_count: record_count,
             free_space_offset,
             is_dirty: false,
             referenced_recently: false,

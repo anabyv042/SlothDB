@@ -3,7 +3,7 @@ use std::path::Path;
 use super::{
     buffer_pool::{BufferPool, DEFAULT_CAPACITY},
     disk_manager::DiskManager,
-    page::RowPage,
+    page::Page,
 };
 
 pub struct Pager {
@@ -26,7 +26,7 @@ impl Pager {
         let page_id = self.page_count as u32;
         self.page_count += 1;
 
-        let page = RowPage::new(page_id);
+        let page = Page::new(page_id);
         self.disk_manager
             .write_page(page_id, &page.serialize())
             .unwrap();
@@ -34,8 +34,8 @@ impl Pager {
         page_id
     }
 
-    pub fn read_page(&mut self, page_id: u32) -> Option<&mut RowPage> {
-        self.buffer_pool.get_page(page_id, &mut self.disk_manager)
+    pub fn read_page(&mut self, page_id: u32) -> Option<&mut Page> {
+        self.buffer_pool.read_page(page_id, &mut self.disk_manager)
     }
 
     pub fn get_page_count(&self) -> usize {

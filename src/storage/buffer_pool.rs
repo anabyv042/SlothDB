@@ -1,10 +1,10 @@
-use super::{disk_manager::DiskManager, page::RowPage, PAGE_SIZE};
+use super::{disk_manager::DiskManager, page::Page, PAGE_SIZE};
 use std::collections::HashMap;
 
 pub const DEFAULT_CAPACITY: usize = 10;
 
 pub struct BufferPool {
-    cache: HashMap<u32, RowPage>,
+    cache: HashMap<u32, Page>,
     capacity: usize,
     clock_hand: Option<usize>,
 }
@@ -18,11 +18,7 @@ impl BufferPool {
         }
     }
 
-    pub fn get_page(
-        &mut self,
-        page_id: u32,
-        disk_manager: &mut DiskManager,
-    ) -> Option<&mut RowPage> {
+    pub fn read_page(&mut self, page_id: u32, disk_manager: &mut DiskManager) -> Option<&mut Page> {
         if !self.cache.contains_key(&page_id) {
             if self.cache.len() == self.capacity {
                 if let Some(victim) = self.find_victim() {
@@ -32,7 +28,7 @@ impl BufferPool {
 
             let mut buffer = vec![0; PAGE_SIZE];
             disk_manager.read_page(page_id, &mut buffer).unwrap();
-            let page = RowPage::deserialize(&buffer);
+            let page = Page::deserialize(&buffer);
             self.cache.insert(page_id, page);
         }
         return self.cache.get_mut(&page_id);
