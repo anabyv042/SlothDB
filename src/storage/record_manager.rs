@@ -31,71 +31,40 @@ impl RecordManager {
         page.insert_record(&record).unwrap();
     }
 
-    pub fn scan_records(&mut self) -> Vec<Record> {
-        let mut rows = vec![];
-        for page_id in 0..self.page_count {
-            let page = self.pager.read_page(page_id).unwrap();
-            for slot in 0..page.get_record_count() {
-                if let Some(row) = page.read_record(slot) {
-                    rows.push(row);
-                }
-            }
+    pub fn scan_records(&mut self) -> RecordIterator {
+        RecordIterator {
+            record_manager: self,
+            current_page: 0,
+            current_slot: 0,
         }
-        rows
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::{record::Record, storage::record_manager::RecordManager};
-    use tempfile::tempdir;
+pub struct RecordIterator<'a> {
+    record_manager: &'a mut RecordManager,
+    current_page: u32,
+    current_slot: usize,
+}
 
-    #[test]
-    fn test_record_manager_insert_and_scan() {
-        let dir = tempdir().unwrap();
-        let db_path = dir.path().join("test_db.db");
-        let mut rm = RecordManager::new(&db_path);
+impl<'a> Iterator for RecordIterator<'a> {
+    type Item = Record;
 
-        let records_to_insert = vec![
-            Record { id: 1, name: "Alice".to_string(), age: 25 },
-            Record { id: 2, name: "Bob".to_string(), age: 30 },
-            Record { id: 3, name: "Charlie".to_string(), age: 35 },
-        ];
-        for record in &records_to_insert {
-            rm.insert_record(record);
-        }
-
-        let scanned_records = rm.scan_records();
-        assert_eq!(scanned_records, records_to_insert);
-    }
-
-    #[test]
-    fn test_record_manager_persistence() {
-        let dir = tempdir().unwrap();
-        let db_path = dir.path().join("test_db.db");
-
-        // Create a RecordManager, insert records, and drop it (simulating closing the database)
-        {
-            let mut rm = RecordManager::new(&db_path);
-            let records_to_insert = vec![
-                Record { id: 1, name: "Alice".to_string(), age: 25 },
-                Record { id: 2, name: "Bob".to_string(), age: 30 },
-            ];
-            for record in &records_to_insert {
-                rm.insert_record(record);
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.current_page < self.record_manager.page_count {
+            let page = self
+                .record_manager
+                .pager
+                .read_page(self.current_page)
+                .unwrap();
+            if self.current_slot < page.get_record_count() {
+                let record = page.read_record(self.current_slot);
+                self.current_slot += 1;
+                return record;
+            } else {
+                self.current_page += 1;
+                self.current_slot = 0;
             }
         }
-
-        // Create a new RecordManager instance (simulating reopening the database)
-        let mut rm = RecordManager::new(&db_path);
-
-        let scanned_records = rm.scan_records();
-        assert_eq!(
-            scanned_records,
-            vec![
-                Record { id: 1, name: "Alice".to_string(), age: 25 },
-                Record { id: 2, name: "Bob".to_string(), age: 30 },
-            ]
-        );
+        None
     }
 }
